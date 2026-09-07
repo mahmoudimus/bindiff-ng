@@ -20,7 +20,16 @@ option java_package = "com.google.security.zynamics.bindiff";
 option java_outer_classname = "BinDiffProtos";
 
 message Config {
-  // Next id: 14
+  // Next id: 15
+
+  message FlowGraphLimits {
+    // Exclusive limits: a body with a count >= its limit is discarded.
+    // Zero or omitted values use the historical defaults, not unlimited size.
+    optional uint32 max_basic_blocks = 1;  // Default: 5000
+    optional uint32 max_edges = 2;         // Default: 5000
+    optional uint32 max_instructions = 3;  // Default: 10000
+  }
+  FlowGraphLimits flow_graph_limits = 14;
 
   // Configuration version. Should be at least "7" for proto based configuration
   // files.

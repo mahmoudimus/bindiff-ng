@@ -24,7 +24,34 @@ This package provides **two main components**:
 - **Easy Customization**: Modify behavior without recompiling
 - **Visual Diff Integration**: Prepare flow graph and call graph diffs
 
-## Requirements
+## Large function bodies
+
+The engine discards a function body when its basic-block, edge, or instruction
+count reaches an exclusive limit. Defaults are 5,000 blocks, 5,000 edges, and
+10,000 instructions. Configure these before loading inputs or starting a diff:
+
+```python
+import bindiff
+
+bindiff.set_config({"flow_graph_limits": {"max_instructions": 20000}})
+bindiff.diff("primary.BinExport", "secondary.BinExport", "matches.BinDiff")
+```
+
+This admits a 13,003-instruction body provided it is also below the block and
+edge limits. `max_basic_blocks` and `max_edges` can be set in the same object.
+Zero or omitted values keep the defaults; negative values are invalid.
+`bindiff.reset_config()` restores defaults. The same `flow_graph_limits` object
+is accepted in `bindiff.json` by the native engine.
+
+Rebuild the engine and Python extension to use these fields. Settings apply to
+subsequent loads and cannot restore a discarded body in an existing result.
+Higher limits can increase runtime and memory use; a retained body alone does
+not establish match quality. Discard warnings include the effective limits.
+
+Pure-Python readers and plugin helpers can be imported without the extension;
+accessing native APIs such as `bindiff.diff` still requires it.
+
+## Build requirements
 
 - Python 3.8 or higher
 - Cython 3.0 or higher

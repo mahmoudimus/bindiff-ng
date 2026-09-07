@@ -40,6 +40,11 @@ def set_config(config: dict) -> None:
     verbatim, in the order given. That is what lets you disable a step: leave it
     out. Omit the key entirely to keep the default list.
 
+    "flow_graph_limits" accepts "max_basic_blocks", "max_edges", and
+    "max_instructions". Counts >= the limit discard the body. Zero or omitted
+    values use 5000, 5000, and 10000 respectively. Set limits before loading
+    inputs; changing them cannot restore a body already discarded.
+
     Enabling, disabling and reordering steps take effect on the next diff.
     Changing a step's *confidence* does not: those values are read when the
     algorithm objects are first constructed, so a confidence change needs a

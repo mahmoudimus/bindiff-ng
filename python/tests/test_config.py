@@ -34,6 +34,59 @@ def test_config_reports_real_matching_steps(bindiff_module):
     assert len(names) == len(set(names)), "duplicate step names in config"
 
 
+def test_graph_limits_patch_and_reset(bindiff_module):
+    expected = dict(max_basic_blocks=5000, max_edges=5000,
+                    max_instructions=10000)
+    assert bindiff_module.get_default_config()["flow_graph_limits"] == expected
+    bindiff_module.set_config({"flow_graph_limits": {"max_instructions": 20000}})
+    assert bindiff_module.get_config()["flow_graph_limits"] == {
+        **expected, "max_instructions": 20000,
+    }
+    bindiff_module.set_config({"flow_graph_limits": {"max_instructions": 0}})
+    assert bindiff_module.get_config()["flow_graph_limits"] == {
+        **expected, "max_instructions": 0,
+    }
+    bindiff_module.reset_config()
+    assert bindiff_module.get_config()["flow_graph_limits"] == expected
+
+
+@pytest.mark.parametrize("invalid", [-1, 2**32, 1.5, "unlimited"])
+def test_invalid_graph_limit_does_not_change_config(bindiff_module, invalid):
+    before = bindiff_module.get_config()
+    with pytest.raises(Exception, match="parsing configuration"):
+        bindiff_module.set_config({"flow_graph_limits": {
+            "max_instructions": invalid,
+        }})
+    assert bindiff_module.get_config() == before
+
+
+def test_graph_limit_changes_the_body_written_by_diff(bindiff_module, tmp_path):
+    from bindiff._pb.binexport2_pb2 import BinExport2
+
+    proto = BinExport2()
+    proto.meta_information.executable_name = "limits"
+    proto.meta_information.architecture_name = "x86-64"
+    proto.mnemonic.add(name="nop")
+    proto.call_graph.vertex.add(address=0x1000, mangled_name="body")
+    for i in range(3):
+        proto.instruction.add(address=0x1000 + i, raw_bytes=b"\x90",
+                              mnemonic_index=0)
+    proto.basic_block.add().instruction_index.add(begin_index=0, end_index=3)
+    graph = proto.flow_graph.add(entry_basic_block_index=0)
+    graph.basic_block_index.append(0)
+    source = tmp_path / "limits.BinExport"
+    source.write_bytes(proto.SerializeToString())
+
+    for run, (limit, expected) in enumerate([(3, 0), (4, 3), (3, 0)]):
+        bindiff_module.set_config({"flow_graph_limits": {
+            "max_instructions": limit,
+        }})
+        output = tmp_path / f"limit-{run}.BinDiff"
+        assert bindiff_module.diff(str(source), str(source), str(output)) == 0
+        with sqlite3.connect(output) as db:
+            assert db.execute("SELECT COUNT(*) FROM instruction").fetchone()[0] == expected
+
+
 def test_the_shipped_sidecar_features_are_enabled(bindiff_module):
     """Both features that measured their keep are in the default config.
 

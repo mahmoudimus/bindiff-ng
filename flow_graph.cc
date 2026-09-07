@@ -38,6 +38,7 @@
 #include "third_party/absl/strings/str_cat.h"
 #include "third_party/zynamics/bindiff/call_graph.h"
 #include "third_party/zynamics/bindiff/comment.h"
+#include "third_party/zynamics/bindiff/config.h"
 #include "third_party/zynamics/bindiff/fixed_points.h"
 #include "third_party/zynamics/bindiff/graph_util.h"
 #include "third_party/zynamics/bindiff/instruction.h"
@@ -55,9 +56,7 @@ using ::security::binexport::GetInstructionAddress;
 
 namespace {
 
-// Maximum number of basic blocks/edges/instructions we want to allow for a
-// single function. If a function has more than this, we simply discard it as
-// invalid.
+// Historical exclusive limits, also used for zero or omitted config values.
 enum {
   kMaxFunctionBasicBlocks = 5000,
   kMaxFunctionEdges = 5000,
@@ -352,14 +351,24 @@ absl::StatusOr<std::unique_ptr<FlowGraph>> FlowGraph::FromProto(
   // This leaves prime, byte hash etc unaffected. It's debatable whether that is
   // good or bad. It doesn't reflect the current reality of the loaded graph
   // after truncation, but it does reflect the actual disassembly.
-  if (flow_graph->instructions_.size() >= kMaxFunctionInstructions ||
-      edges.size() >= kMaxFunctionEdges ||
-      temp_addresses.size() >= kMaxFunctionBasicBlocks) {
+  const auto& limits = config::Proto().flow_graph_limits();
+  const uint32_t max_instructions = limits.max_instructions()
+                                        ? limits.max_instructions()
+                                        : kMaxFunctionInstructions;
+  const uint32_t max_edges =
+      limits.max_edges() ? limits.max_edges() : kMaxFunctionEdges;
+  const uint32_t max_blocks = limits.max_basic_blocks()
+                                  ? limits.max_basic_blocks()
+                                  : kMaxFunctionBasicBlocks;
+  if (flow_graph->instructions_.size() >= max_instructions ||
+      edges.size() >= max_edges || temp_addresses.size() >= max_blocks) {
     LOG(WARNING) << absl::StrCat(
         "Function ", FormatAddress(flow_graph->entry_point_address_),
         " is excessively large: ", temp_addresses.size(), " basic blocks, ",
         edges.size(), " edges, ", flow_graph->instructions_.size(),
-        " instructions. Discarding.");
+        " instructions. Discarding body (exclusive limits: ", max_blocks,
+        " basic blocks, ", max_edges, " edges, ", max_instructions,
+        " instructions).");
   } else {
     Graph temp_graph(boost::edges_are_unsorted_multi_pass, edges.begin(),
                      edges.end(), edge_properties.begin(),
