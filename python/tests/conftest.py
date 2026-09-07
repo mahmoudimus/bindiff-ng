@@ -80,12 +80,13 @@ def bindiff_module():
     """The compiled extension, or a skip explaining how to build it."""
     try:
         import bindiff
+        has_diff = hasattr(bindiff, "diff")
     except ImportError as exc:
         pytest.skip(
             f"bindiff extension not importable ({exc}). Build it with:\n"
             "  ./tools/scripts/run_tests_docker.sh build"
         )
-    if not hasattr(bindiff, "diff"):
+    if not has_diff:
         pytest.skip("bindiff imported but has no diff(); extension not built")
     return bindiff
 

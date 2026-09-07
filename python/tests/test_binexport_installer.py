@@ -11,6 +11,7 @@ import hashlib
 import importlib.util
 import io
 import json
+import os
 import sys
 import zipfile
 from pathlib import Path
@@ -165,6 +166,7 @@ class TestInstall:
         assert written == tmp_path / "binexport12_ida.so"
         assert written.read_bytes() == b"ELF..."
 
+    @pytest.mark.skipif(os.name == "nt", reason="Windows has no POSIX execute bits")
     def test_it_is_executable(self, tmp_path):
         payload = archive({"binexport12_ida.so": b"ELF..."})
         plan = bi.plan(tmp_path, "8.1.3", system="Linux", machine="x86_64")

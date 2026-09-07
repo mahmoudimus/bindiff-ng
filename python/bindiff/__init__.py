@@ -31,27 +31,6 @@ Example:
 # bindiff-ng for the same reason, while the import name stays bindiff.
 __version__ = "8.1.4"
 
-from .core import (
-    diff,
-    incremental_diff,
-    load_comments,
-    load_matches,
-    load_statistics,
-    get_config,
-    get_default_config,
-    set_config,
-    reset_config,
-    CallGraph,
-    FlowGraph,
-    FixedPoint,
-    MatchInfo,
-    StatisticsInfo,
-)
-
-from .results import (
-    Results,
-)
-
 from .database import (
     BinDiffDatabase,
     DiffMetadata,
@@ -94,3 +73,20 @@ __all__ = [
     "MatchInfo",
     "StatisticsInfo",
 ]
+
+
+# Keep readers and plugin helpers usable without a compiled engine. Native
+# imports still fail normally when an engine API is actually requested.
+def __getattr__(name):
+    if name not in __all__:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    from importlib import import_module
+
+    module = import_module(".results" if name == "Results" else ".core", __name__)
+    value = getattr(module, name)
+    globals()[name] = value
+    return value
+
+
+def __dir__():
+    return sorted(set(globals()) | set(__all__))

@@ -704,6 +704,42 @@ class TestNeedsANameFilter:
 
 
 class TestOneGeneratedNamePredicate:
+    def test_helpers_do_not_load_the_native_extension(self):
+        import subprocess
+        import sys
+        from pathlib import Path
+
+        probe = """
+import importlib.abc
+import sys
+class NoNative(importlib.abc.MetaPathFinder):
+    def find_spec(self, fullname, path=None, target=None):
+        if fullname == 'bindiff.core':
+            raise ModuleNotFoundError('native extension deliberately unavailable')
+sys.meta_path.insert(0, NoNative())
+import bindiff
+from bindiff.binexport import _explain_protobuf
+from bindiff.database import BinDiffDatabase
+from ida_plugin.porting import _is_generated_name
+assert _is_generated_name('sub_401000')
+assert sys.executable in _explain_protobuf(Exception('runtime mismatch'))
+assert bindiff.BinDiffDatabase is BinDiffDatabase
+assert 'bindiff.core' not in sys.modules
+assert 'diff' in dir(bindiff)
+try:
+    bindiff.diff
+except ModuleNotFoundError as exc:
+    assert 'deliberately unavailable' in str(exc)
+else:
+    raise AssertionError('native API must still require the extension')
+"""
+        result = subprocess.run(
+            [sys.executable, "-c", probe],
+            cwd=Path(__file__).resolve().parents[1],
+            capture_output=True, text=True,
+        )
+        assert result.returncode == 0, result.stderr
+
     def test_porting_and_the_filters_agree(self):
         """Two copies is how one learns a new prefix and the other does not,
         and the symptom is a filter promising rows porting then refuses."""
