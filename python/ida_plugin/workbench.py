@@ -117,13 +117,17 @@ if IDA_AVAILABLE:
             self._match_case = QtWidgets.QCheckBox("Match case")
             self._whole_words = QtWidgets.QCheckBox("Whole words")
             self._regex = QtWidgets.QCheckBox("Regular expression")
+            self._negate = QtWidgets.QCheckBox("Negate")
+            self._negate.setToolTip(
+                "Inverts the rule: is not, does not contain, does not match.")
             # Regex replaces the condition rather than refining it, which is
             # how the dialog behaves and why the dropdown goes grey.
             self._regex.toggled.connect(
                 lambda on: self._condition.setEnabled(not on))
 
             flags = QtWidgets.QHBoxLayout()
-            for box in (self._match_case, self._whole_words, self._regex):
+            for box in (self._negate, self._match_case, self._whole_words,
+                        self._regex):
                 flags.addWidget(box)
             flags.addStretch(1)
             add = QtWidgets.QPushButton("Add")
@@ -166,7 +170,8 @@ if IDA_AVAILABLE:
                 action=self._action.currentText(),
                 match_case=self._match_case.isChecked(),
                 whole_words=self._whole_words.isChecked(),
-                regex=self._regex.isChecked())
+                regex=self._regex.isChecked(),
+                negate=self._negate.isChecked())
             try:
                 candidate = self.rules.with_rule(rule)
             except self._Unusable as exc:
@@ -217,7 +222,7 @@ if IDA_AVAILABLE:
                           else self._labels.get(rule.column, rule.column))
                 for position, text in enumerate(
                         (column,
-                         "matches" if rule.regex else rule.condition,
+                         rule.condition_text,
                          rule.value, rule.action), start=1):
                     cell = QtWidgets.QTableWidgetItem(text)
                     cell.setFlags(Qt.ItemFlag.ItemIsEnabled)

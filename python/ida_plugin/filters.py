@@ -39,6 +39,11 @@ STARTS_WITH = "starts with"
 ENDS_WITH = "ends with"
 CONDITIONS = (CONTAINS, IS, STARTS_WITH, ENDS_WITH)
 
+# How a negated condition reads, in the list and in describe().
+_NEGATED = {CONTAINS: "does not contain", IS: "is not",
+            STARTS_WITH: "does not start with", ENDS_WITH: "does not end with",
+            "matches": "does not match"}
+
 INCLUDE = "include"
 EXCLUDE = "exclude"
 ACTIONS = (INCLUDE, EXCLUDE)
@@ -52,6 +57,11 @@ class Rule:
     `regex` makes `value` a pattern and ignores `condition`, which is how the
     dialog behaves: the checkbox replaces the dropdown rather than refining
     it.
+
+    `negate` inverts the whole rule -- "is not", "does not contain" -- and is
+    applied to the rule's answer, not per cell. Per cell, "(any) is not X"
+    would hold for nearly every row, because some other cell always differs
+    from X; what is meant is "no cell is X".
     """
 
     value: str
@@ -62,11 +72,18 @@ class Rule:
     whole_words: bool = False
     regex: bool = False
     enabled: bool = True
+    negate: bool = False
+
+    @property
+    def condition_text(self) -> str:
+        """The condition as it reads: "is not" rather than "is" plus a flag."""
+        how = "matches" if self.regex else self.condition
+        return _NEGATED.get(how, f"not {how}") if self.negate else how
 
     def describe(self) -> str:
         """The rule as the dialog reads it, for a tooltip or a log line."""
         column = "(any)" if self.column == ANY_COLUMN else self.column
-        how = "matches" if self.regex else self.condition
+        how = self.condition_text
         flags = [name for name, on in (("case", self.match_case),
                                        ("whole words", self.whole_words))
                  if on]
@@ -117,6 +134,8 @@ class _Compiled:
     # writes -- needs no per-cell work at all. It is answered against one
     # lowered haystack per row instead of seven lower() calls and a generator.
     plain: Optional[str] = None
+    # Rule.negate: the rule holds when no cell it looks at matches.
+    negate: bool = False
 
 
 # Joined with a character no rendered cell can contain, so a substring can
@@ -161,7 +180,8 @@ class RuleSet:
                     and not rule.whole_words and rule.condition == CONTAINS):
                 plain = rule.value.lower()
             compiled = _Compiled(_predicate(rule), index, rule.match_case,
-                                 plain)
+                                 plain,
+                                 negate=rule.negate)
             (self._includes if rule.action == INCLUDE
              else self._excludes).append(compiled)
             if plain is not None:
@@ -191,8 +211,13 @@ class RuleSet:
                 return True
         return False
 
+    @classmethod
+    def _holds(cls, compiled: _Compiled, cells, lowered, haystack) -> bool:
+        return cls._positive(compiled, cells, lowered, haystack) \
+            != compiled.negate
+
     @staticmethod
-    def _holds(compiled: _Compiled, cells, lowered, haystack) -> bool:
+    def _positive(compiled: _Compiled, cells, lowered, haystack) -> bool:
         if compiled.plain is not None:
             return compiled.plain in haystack
         source = cells if compiled.match_case or lowered is None else lowered

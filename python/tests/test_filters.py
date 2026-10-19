@@ -18,8 +18,9 @@ _ROOT = Path(__file__).resolve().parents[1]
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
-from ida_plugin.filters import (ANY_COLUMN, ENDS_WITH, EXCLUDE, INCLUDE, IS,
-                                STARTS_WITH, Rule, RuleSet, Unusable)
+from ida_plugin.filters import (ANY_COLUMN, CONTAINS, ENDS_WITH, EXCLUDE,
+                                INCLUDE, IS, STARTS_WITH, Rule, RuleSet,
+                                Unusable)
 
 # Rendered cells, in COLUMNS order: trust, this database, other binary, sim,
 # changed, found by, state.
@@ -66,6 +67,53 @@ class TestConditions:
         """Rather than matching nothing, which reads as an empty result."""
         with pytest.raises(Unusable, match="not a valid pattern"):
             RuleSet([Rule("(unclosed", regex=True)])
+
+
+class TestNegation:
+    def test_is_not(self):
+        assert keeps([Rule("CRT_init", column="other_binary", condition=IS,
+                           negate=True)])
+        assert not keeps([Rule("memcpy", column="other_binary", condition=IS,
+                               negate=True)])
+
+    def test_any_column_means_no_cell_matches(self):
+        # Per cell, "(any) is not memcpy" would hold for this row -- six of
+        # its seven cells differ. The rule is about the row, so it must not.
+        assert not keeps([Rule("memcpy", condition=IS, negate=True)])
+        assert keeps([Rule("memcpy", condition=IS, negate=True)], OTHER)
+
+    def test_every_condition_negates(self):
+        for condition, value in ((CONTAINS, "emcp"), (STARTS_WITH, "mem"),
+                                 (ENDS_WITH, "cpy")):
+            rule = Rule(value, column="other_binary", condition=condition)
+            assert keeps([rule])
+            assert not keeps([Rule(**{**rule.__dict__, "negate": True})])
+
+    def test_a_regex_negates(self):
+        assert not keeps([Rule(r"^mem", column="other_binary", regex=True,
+                               negate=True)])
+        assert keeps([Rule(r"^mem", column="other_binary", regex=True,
+                           negate=True)], OTHER)
+
+    def test_the_fast_path_negates_too(self):
+        # A plain "(any) contains" is answered from one joined haystack, a
+        # separate code path that must honour the flag as well.
+        assert not keeps([Rule("memcpy", negate=True)])
+        assert keeps([Rule("memcpy", negate=True)], OTHER)
+
+    def test_a_negated_exclude_keeps_only_the_value(self):
+        # "exclude where state is not ported" == "only ported".
+        rules = [Rule("ported", column="state", condition=IS, negate=True,
+                      action=EXCLUDE)]
+        assert keeps(rules)
+        assert not keeps(rules, OTHER)
+
+    def test_it_reads_as_a_negation(self):
+        assert Rule("x", condition=IS, negate=True).condition_text == "is not"
+        assert Rule("x", negate=True).describe() == \
+            "If (any) does not contain 'x' then include"
+        assert Rule("x", regex=True, negate=True).condition_text == \
+            "does not match"
 
 
 class TestColumns:

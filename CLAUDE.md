@@ -583,7 +583,9 @@ The tables sort through `ui_logic`, not Qt, so Qt never draws the sort arrow;
 `_show_sort` does, and a lens change resets it to the lens's own order. Without
 it the header read as unsortable even though clicks worked. A row survives when it matches at least one
 enabled include (or there are none) and **no** enabled exclude -- excludes
-always win, which makes "everything except the CRT" one rule.
+always win, which makes "everything except the CRT" one rule. **Negate** inverts a
+rule's answer for the row, not each cell: per cell, "(any) is not memcpy"
+holds for almost every row because some other cell always differs.
 
 `RuleSet` compiles once: patterns built at construction, column names resolved
 to indices, and a plain case-insensitive "(any) contains" -- the rule almost

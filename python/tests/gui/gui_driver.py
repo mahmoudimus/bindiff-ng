@@ -365,6 +365,24 @@ def run_checks() -> None:
         check("the list names the column as the table does",
               dialog._list.item(0, 1).text() == "Outcome",
               dialog._list.item(0, 1).text())
+        dialog._reset()
+        # Negate: "Outcome is not <x>" keeps nothing but <x>'s complement.
+        dialog._column.setCurrentIndex(dialog._column.findData("outcome"))
+        dialog._condition.setCurrentText("is")
+        dialog._action.setCurrentText("include")
+        dialog._negate.setChecked(True)
+        dialog._value.setText(target)
+        dialog._add()
+        negated = [bench._table.model().index(r, outcome_column).data()
+                   for r in range(bench._table.model().rowCount())]
+        check("a negated rule keeps everything but the value",
+              target not in negated
+              and len(negated) == len(shown_outcomes)
+              - shown_outcomes.count(target),
+              f"{negated!r}")
+        check("and the list says is not",
+              dialog._list.item(0, 2).text() == "is not",
+              dialog._list.item(0, 2).text())
         dialog.close()
         bench._reset_filters()
 
