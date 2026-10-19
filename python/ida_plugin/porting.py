@@ -186,6 +186,26 @@ class PortPreview:
         """The bucket this match is in, or "" for an id the preview never saw."""
         return self._by_id.get(match_id, "")
 
+    def outcomes(self) -> Dict[int, str]:
+        """Every match's bucket, for the filter rules and the sort."""
+        return dict(self._by_id)
+
+    def restricted_to(self, match_ids: Iterable[int]) -> "PortPreview":
+        """The same preview over a subset of its matches.
+
+        Each match's bucket depends on that match alone, so a preview built
+        once over the whole lens can answer for whatever the rules leave on
+        screen without being rebuilt from the database.
+        """
+        wanted = set(match_ids)
+        return PortPreview(
+            self.threshold,
+            tuple(p for p in self.will_write if p.match_id in wanted),
+            tuple(p for p in self.replaces_yours if p.match_id in wanted),
+            tuple(i for i in self.already_named if i in wanted),
+            tuple(i for i in self.below_threshold if i in wanted),
+            tuple(i for i in self.nothing_to_write if i in wanted))
+
     def summary(self) -> str:
         """The footer, counting each outcome separately.
 

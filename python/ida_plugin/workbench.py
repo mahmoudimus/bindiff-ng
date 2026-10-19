@@ -82,13 +82,19 @@ if IDA_AVAILABLE:
         without losing it.
         """
 
-        def __init__(self, rules, parent=None) -> None:
+        def __init__(self, rules, parent=None,
+                     on_change: Optional[Callable] = None) -> None:
             super().__init__(parent)
             from ida_plugin.filters import (ACTIONS, ANY_COLUMN, CONDITIONS,
                                             Rule, RuleSet, Unusable)
             from ida_plugin.ui_logic import COLUMNS
 
             self._Rule, self._RuleSet, self._Unusable = Rule, RuleSet, Unusable
+            self._labels = dict(COLUMNS)
+            # Every edit is applied as it is made, not when the dialog
+            # closes: a rule added to the list while the table behind it
+            # stays the same reads as a rule that does nothing.
+            self._on_change = on_change
             self.rules = rules
             self.setWindowTitle("Modify filters")
 
@@ -176,10 +182,16 @@ if IDA_AVAILABLE:
             self.rules = candidate
             self._value.clear()
             self._repopulate()
+            self._changed()
 
         def _reset(self) -> None:
             self.rules = self._RuleSet()
             self._repopulate()
+            self._changed()
+
+        def _changed(self) -> None:
+            if self._on_change is not None:
+                self._on_change(self.rules)
 
         def _toggled(self, item) -> None:
             if item.column() != 0:
@@ -189,6 +201,7 @@ if IDA_AVAILABLE:
             if index < len(self.rules.rules) and \
                     self.rules.rules[index].enabled != enabled:
                 self.rules = self.rules.toggled(index, enabled)
+                self._changed()
 
         def _repopulate(self) -> None:
             self._list.blockSignals(True)
@@ -200,7 +213,8 @@ if IDA_AVAILABLE:
                 check.setCheckState(Qt.CheckState.Checked if rule.enabled
                                     else Qt.CheckState.Unchecked)
                 self._list.setItem(index, 0, check)
-                column = "*" if rule.column == "*" else rule.column
+                column = ("(any)" if rule.column == "*"
+                          else self._labels.get(rule.column, rule.column))
                 for position, text in enumerate(
                         (column,
                          "matches" if rule.regex else rule.condition,
@@ -760,6 +774,13 @@ if IDA_AVAILABLE:
             self._sort: Optional[Tuple[str, bool]] = None
             self._threshold = DEFAULT_PORT_MIN_SIMILARITY
             self._preview = None
+            # The preview over every match, and what it was built from. Each
+            # match's outcome depends on that match and the threshold alone,
+            # so it is built once per result and threshold, and serves the
+            # Outcome column, the rules that filter on it and the sort.
+            self._full_preview = None
+            self._preview_basis: Optional[tuple] = None
+            self._outcomes: Dict[int, str] = {}
             self._shown: list = []
             self._rows_source: Optional[list] = None
             self._subscriptions: List[tuple] = []
@@ -908,6 +929,8 @@ if IDA_AVAILABLE:
             # A different predicate is not a narrowing of the previous one.
             self._filter.invalidate()
             self._sort = None
+            self._table.set_sort(self._lens.sort_column,
+                                 self._lens.sort_descending)
             self._refresh_rows()
 
         def selected_ids(self) -> List[int]:
@@ -1012,24 +1035,40 @@ if IDA_AVAILABLE:
                 # back the same list until something changes it.
                 self._filter.invalidate()
                 self._rows_source = rows
+            self._update_preview(rows)
             self._shown = self._filter(rows, self._key())
             self._table.set_rows(self._shown)
             self._lens_row.set_counts(lens_counts(rows, self._threshold))
             self._refresh_outcome()
             self._refresh_status()
 
+        def _update_preview(self, rows) -> None:
+            """Rebuilds the full preview when the result or threshold moved.
+
+            Before the rules run, because they read the Outcome column: a
+            preview built afterwards over what they left would leave every
+            rule on that column matching an empty cell.
+            """
+            basis = (rows, self._threshold)
+            if (self._preview_basis is not None
+                    and self._preview_basis[0] is rows
+                    and self._preview_basis[1] == self._threshold):
+                return
+            self._preview_basis = basis
+            self._full_preview = preview_symbol_ports(
+                self._session.controller.matches_for(),
+                min_similarity=self._threshold)
+            self._outcomes = self._full_preview.outcomes()
+            self._table.set_annotations("outcome", self._outcomes)
+
         def _refresh_outcome(self) -> None:
-            """The Outcome column and the footer, which are the same preview."""
-            if self._lens is not READY_TO_PORT:
+            """The footer: the preview over what is on screen."""
+            if self._lens is not READY_TO_PORT or self._full_preview is None:
                 self._preview = None
                 self._footer.setVisible(False)
                 return
-            ids = [row.match_id for row in self._shown]
-            self._preview = preview_symbol_ports(
-                self._session.controller.matches_for(ids),
-                min_similarity=self._threshold)
-            self._table.set_annotations(
-                "outcome", {i: self._preview.outcome(i) for i in ids})
+            self._preview = self._full_preview.restricted_to(
+                row.match_id for row in self._shown)
             self._footer.set_preview(self._preview, self._port_targets())
             self._footer.setVisible(True)
 
@@ -1075,13 +1114,15 @@ if IDA_AVAILABLE:
             return (lens == was_lens and threshold == was_threshold
                     and query.narrows(was_query) and rules.narrows(was_rules))
 
-        @staticmethod
-        def _select(rows: Sequence, key: tuple) -> list:
+        def _select(self, rows: Sequence, key: tuple) -> list:
+            """The outcomes are not in the key: they are a function of the
+            rows and the threshold, and a change to either already
+            invalidates or re-keys the cache."""
             lens, threshold, sort, query, rules = key
             column, descending = sort if sort else (None, None)
             return apply_lens(rows, lens_by_key(lens), query, threshold,
                               sort_column=column, sort_descending=descending,
-                              rules=rules)
+                              rules=rules, outcome=self._outcomes)
 
         # -- the search field ------------------------------------------------
 
@@ -1177,10 +1218,13 @@ if IDA_AVAILABLE:
             would bring its own but cannot tint a cell, which is what the
             whole Trust column rests on.
             """
-            dialog = FilterDialog(self._rules, self._table)
-            if exec_widget(dialog) and dialog.rules != self._rules:
-                self._rules = dialog.rules
-                self._refresh_rows()
+            dialog = FilterDialog(self._rules, self._table,
+                                  on_change=self._set_rules)
+            exec_widget(dialog)
+
+        def _set_rules(self, rules) -> None:
+            self._rules = rules
+            self._refresh_rows()
 
         def _reset_filters(self) -> None:
             if self._rules:

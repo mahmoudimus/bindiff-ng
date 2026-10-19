@@ -61,6 +61,21 @@ if IDA_AVAILABLE:
         except AttributeError:
             header.setSectionResizeMode(QtWidgets.QHeaderView.Interactive)
 
+    def _show_sort(header, section: int, descending: bool) -> None:
+        """Draws the sort arrow on `section`.
+
+        The views sort through ui_logic rather than through Qt, so Qt never
+        sets the indicator itself -- and a header with no arrow reads as one
+        that does not sort, whatever a click actually does.
+        """
+        try:
+            order = (Qt.SortOrder.DescendingOrder if descending
+                     else Qt.SortOrder.AscendingOrder)
+        except AttributeError:
+            order = Qt.DescendingOrder if descending else Qt.AscendingOrder
+        header.setSortIndicatorShown(True)
+        header.setSortIndicator(section, order)
+
     class _SizesColumnsOnce:
         """Sizes columns to their contents the first time rows arrive.
 
@@ -416,6 +431,8 @@ if IDA_AVAILABLE:
 
             self._sort_column = "similarity"
             self._sort_descending = True
+            _show_sort(header, column_index(self._sort_column),
+                       self._sort_descending)
             self.on_activated: Optional[Callable[[MatchRow], None]] = None
             self.on_selection_changed: Optional[Callable[[list], None]] = None
             self.on_context_menu: Optional[Callable] = None
@@ -588,6 +605,14 @@ if IDA_AVAILABLE:
             self.selectionModel().select(selection,
                                          flag.ClearAndSelect | flag.Rows)
 
+        def set_sort(self, column: str, descending: bool) -> None:
+            """The order the rows are in, set from outside -- a lens brings
+            its own, and the next header click has to toggle from that rather
+            than from whatever was clicked under the previous lens."""
+            self._sort_column, self._sort_descending = column, descending
+            _show_sort(self.horizontalHeader(), column_index(column),
+                       descending)
+
         def _on_header_clicked(self, section: int) -> None:
             column = COLUMNS[section][0]
             if column == self._sort_column:
@@ -597,6 +622,7 @@ if IDA_AVAILABLE:
                 # Scores read best highest-first; names and addresses ascending.
                 self._sort_descending = column in ("similarity", "confidence",
                                                    "trust")
+            _show_sort(self.horizontalHeader(), section, self._sort_descending)
             if self.on_sort_changed:
                 self.on_sort_changed(self._sort_column, self._sort_descending)
 
@@ -785,6 +811,7 @@ if IDA_AVAILABLE:
 
             self._sort_column = "address"
             self._sort_descending = False
+            _show_sort(header, 0, False)
             self.on_activated: Optional[Callable[[UnmatchedRow], None]] = None
             self.doubleClicked.connect(self._on_double_clicked)
 
@@ -820,6 +847,7 @@ if IDA_AVAILABLE:
                 self._sort_descending = not self._sort_descending
             else:
                 self._sort_column, self._sort_descending = column, False
+            _show_sort(self.horizontalHeader(), section, self._sort_descending)
             self.set_rows(self._model.rows)
 
         def _on_double_clicked(self, index) -> None:

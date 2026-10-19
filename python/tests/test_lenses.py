@@ -75,5 +75,34 @@ class TestApplying:
                            sort_column="similarity", sort_descending=False)
         assert shown[0].match_id == 5
 
+    def test_a_rule_can_exclude_by_outcome(self):
+        # The Outcome column is filled from the port preview, not the row, so
+        # a rule only sees it when the outcomes are passed in. Without them
+        # every cell was "" and "Outcome is already named -> Exclude" kept
+        # every row.
+        from ida_plugin.filters import EXCLUDE, Rule, RuleSet
+        outcomes = {1: "will write", 2: "already named", 3: "already named",
+                    5: "below threshold"}
+        rules = RuleSet([Rule("already named", column="outcome",
+                              condition="is", action=EXCLUDE)])
+        shown = apply_lens(ROWS, READY_TO_PORT, parse_query(""), 0.5,
+                           rules=rules, outcome=outcomes)
+        assert sorted(r.match_id for r in shown) == [1, 5]
+
+    def test_any_column_sees_the_outcome(self):
+        from ida_plugin.filters import EXCLUDE, Rule, RuleSet
+        rules = RuleSet([Rule("already named", action=EXCLUDE)])
+        shown = apply_lens(ROWS, READY_TO_PORT, parse_query(""), 0.5,
+                           rules=rules, outcome={2: "already named"})
+        assert 2 not in {r.match_id for r in shown}
+
+    def test_sorting_by_outcome_orders_by_it(self):
+        outcomes = {1: "will write", 2: "already named", 3: "below threshold",
+                    5: "replaces yours"}
+        shown = apply_lens(ROWS, READY_TO_PORT, parse_query(""), 0.5,
+                           sort_column="outcome", sort_descending=False,
+                           outcome=outcomes)
+        assert [outcomes[r.match_id] for r in shown] == sorted(outcomes.values())
+
     def test_counts_cover_every_lens(self):
         assert lens_counts(ROWS, 0.5) == {"needs_a_look": 3, "ready_to_port": 4, "all": 5}

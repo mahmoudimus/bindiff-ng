@@ -11,7 +11,7 @@ No Qt and no IDA.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Callable, Dict, List, Optional, Sequence, Tuple
+from typing import Callable, Dict, List, Mapping, Optional, Sequence, Tuple
 
 from ida_plugin.query import Query
 from ida_plugin.ui_logic import (DEFAULT_VISIBLE_COLUMNS, ChangeType,
@@ -67,7 +67,8 @@ def lens_by_key(key: str) -> Lens:
 def apply_lens(rows: Sequence[MatchRow], lens: Lens, query: Query,
                threshold: float, *, sort_column: Optional[str] = None,
                sort_descending: Optional[bool] = None,
-               rules=None) -> List[MatchRow]:
+               rules=None,
+               outcome: Optional[Mapping[int, str]] = None) -> List[MatchRow]:
     """The shown set: the lens, then the search, then the filter rules.
 
     Rules last because they are the only stage that has to render a row --
@@ -75,15 +76,22 @@ def apply_lens(rows: Sequence[MatchRow], lens: Lens, query: Query,
     surviving row rather than once per row. On the measured 10,163-match
     diff that is the difference between the rules being free and being the
     slowest thing in the pipeline.
+
+    `outcome` maps match id to the port preview's verdict. The table shows
+    it, so the rules and the sort have to see it too: a rule that cannot see
+    a value on screen reads as a filter that does not work.
     """
     selected = [row for row in lens.select(rows, threshold) if query.matches(row)]
     if rules:
         from ida_plugin.ui_logic import cell_values
 
-        selected = [row for row in selected if rules.matches(cell_values(row))]
+        outcomes = outcome or {}
+        selected = [row for row in selected
+                    if rules.matches(cell_values(
+                        row, outcomes.get(row.match_id, "")))]
     column = sort_column or lens.sort_column
     descending = lens.sort_descending if sort_descending is None else sort_descending
-    return sort_rows(selected, column, descending)
+    return sort_rows(selected, column, descending, outcome)
 
 
 def lens_counts(rows: Sequence[MatchRow], threshold: float) -> Dict[str, int]:

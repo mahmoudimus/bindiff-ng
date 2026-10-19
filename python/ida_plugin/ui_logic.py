@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import IntFlag
-from typing import Callable, Iterable, List, Optional, Sequence
+from typing import Callable, Iterable, List, Mapping, Optional, Sequence
 
 from ida_plugin.trust import TRUST_RANK, assess, found_by as _found_by
 
@@ -213,7 +213,9 @@ def column_index(name: str) -> int:
     raise ValueError(f"unknown column {name!r}")
 
 
-def _sort_key(column: str) -> Callable[[MatchRow], object]:
+def _sort_key(column: str,
+              outcome: Optional[Mapping[int, str]] = None
+              ) -> Callable[[MatchRow], object]:
     if column == "trust":
         return lambda row: TRUST_RANK.get(row.trust, -1)
     if column == "this_database":
@@ -224,10 +226,14 @@ def _sort_key(column: str) -> Callable[[MatchRow], object]:
         return lambda row: (bin(row.change_flags).count("1"), row.change_flags)
     if column == "found_by":
         return lambda row: row.found_by.lower()
-    if column in ("state", "outcome"):
-        # The outcome cell belongs to the lens, not the row, so every row
-        # sorts equal on it rather than raising on a column the table has.
-        return lambda row: row.state if column == "state" else ""
+    if column == "state":
+        return lambda row: row.state
+    if column == "outcome":
+        # The outcome belongs to the port preview, not the row, so it is
+        # passed in; without one every row sorts equal rather than raising
+        # on a column the table has.
+        outcomes = outcome or {}
+        return lambda row: outcomes.get(row.match_id, "")
     if column == "comments_available":
         return lambda row: row.comments_available
     if column == "comments_ported":
@@ -242,7 +248,8 @@ def _sort_key(column: str) -> Callable[[MatchRow], object]:
 
 
 def sort_rows(rows: Iterable[MatchRow], column: str,
-              descending: bool = False) -> List[MatchRow]:
+              descending: bool = False,
+              outcome: Optional[Mapping[int, str]] = None) -> List[MatchRow]:
     """Sorts by a column name from COLUMNS.
 
     Names sort case-insensitively; everything else sorts naturally. Raises on an
@@ -251,7 +258,7 @@ def sort_rows(rows: Iterable[MatchRow], column: str,
     known = {name for name, _ in COLUMNS}
     if column not in known:
         raise ValueError(f"unknown column {column!r}; expected one of {sorted(known)}")
-    return sorted(rows, key=_sort_key(column), reverse=descending)
+    return sorted(rows, key=_sort_key(column, outcome), reverse=descending)
 
 
 # Prefixes IDA uses when it names something itself. A name starting with one
@@ -426,11 +433,16 @@ class IncrementalFilter:
         self._result = []
 
 
-def cell_values(row: MatchRow) -> tuple:
+def cell_values(row: MatchRow, outcome: str = "") -> tuple:
     """One row's cells, in COLUMNS order.
 
     Here rather than in the Qt table so the formatting is testable without a
     GUI, and so the model that renders it stays a thin adapter.
+
+    `outcome` is the port preview's verdict for this row. It is not a
+    property of the row -- it moves with the threshold -- so the caller
+    supplies it; filter rules match these cells, and a hard-coded "" here
+    made every rule on the Outcome column match nothing.
     """
     return (
         row.trust.capitalize(),
@@ -440,7 +452,7 @@ def cell_values(row: MatchRow) -> tuple:
         row.change_words,
         row.found_by,
         row.state,
-        "",                      # outcome: supplied by the lens, not the row
+        outcome,
         str(row.comments_available),
         f"{row.confidence:.2f}",
         row.change_text,

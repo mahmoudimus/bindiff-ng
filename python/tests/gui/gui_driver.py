@@ -224,6 +224,52 @@ def run_checks() -> None:
     check("the lens restores its columns",
           sum(1 for i in range(bench._table.model().columnCount())
               if not bench._table.isColumnHidden(i)) == 7)
+    # A real mouse event on the header, not a call to the handler: the
+    # handler being right says nothing about whether a click reaches it.
+    # (QtTest is not shipped with IDA's PySide6.)
+    from bindiff.qt_shim import QtCore, QtWidgets
+
+    def click_header(column_name: str) -> None:
+        from ida_plugin.ui_logic import column_index
+        header = bench._table.horizontalHeader()
+        section = column_index(column_name)
+        x = header.sectionViewportPosition(section) + 4
+        point = QtCore.QPoint(x, header.height() // 2)
+        from bindiff.qt_shim import QtGui
+        viewport = header.viewport()
+        Event = QtCore.QEvent.Type
+        Button = QtCore.Qt.MouseButton
+        for kind, buttons in ((Event.MouseButtonPress, Button.LeftButton),
+                              (Event.MouseButtonRelease, Button.NoButton)):
+            event = QtGui.QMouseEvent(
+                kind, QtCore.QPointF(point),
+                QtCore.QPointF(viewport.mapToGlobal(point)),
+                Button.LeftButton, buttons,
+                QtCore.Qt.KeyboardModifier.NoModifier)
+            QtWidgets.QApplication.sendEvent(viewport, event)
+        QtWidgets.QApplication.processEvents()
+
+    def shown_names() -> list:
+        return [row.name_primary for row in bench._table.rows]
+
+    before_click = shown_names()
+    click_header("this_database")
+    first = shown_names()
+    click_header("this_database")
+    second = shown_names()
+    note("header click order", f"{before_click} -> {first} -> {second}")
+    check("a header click sorts the table",
+          first != before_click or second != first,
+          f"order never changed: {before_click}")
+    check("a second click reverses it", second == list(reversed(first)),
+          f"{first} then {second}")
+    check("the header shows which column is sorted",
+          bench._table.horizontalHeader().isSortIndicatorShown()
+          and bench._table.horizontalHeader().sortIndicatorSection()
+          == __import__("ida_plugin.ui_logic", fromlist=["x"])
+          .column_index("this_database"),
+          "no sort indicator on the clicked column")
+
     bench._search.setText("nomatch_zzz")
     bench._apply_search()   # bypass the debounce
     check("search narrows", bench._table.model().rowCount() == 0)
@@ -279,6 +325,56 @@ def run_checks() -> None:
     dialog._reset()
     check("the dialog resets", not dialog.rules)
     dialog.close()
+
+    # The reported bug: on Ready to port, "Outcome is <x> -> Exclude" was
+    # added to the list and nothing on screen changed. Two causes -- the
+    # rules saw "" in the Outcome cell, and the table was only refiltered
+    # when the dialog closed -- so this drives the dialog's own controls with
+    # it still open, the way a person does.
+    bench.set_lens("ready_to_port")
+    from ida_plugin.ui_logic import column_index
+    outcome_column = column_index("outcome")
+    shown_outcomes = [bench._table.model().index(r, outcome_column).data()
+                      for r in range(bench._table.model().rowCount())]
+    note("ready to port outcomes", repr(shown_outcomes))
+    check("ready to port has rows to filter", bool(shown_outcomes))
+    if shown_outcomes:
+        target = shown_outcomes[0]
+        dialog = workbench.FilterDialog(bench._rules, bench._table,
+                                        on_change=bench._set_rules)
+        dialog._column.setCurrentIndex(dialog._column.findData("outcome"))
+        dialog._condition.setCurrentText("is")
+        dialog._action.setCurrentText(EXCLUDE)
+        dialog._value.setText(target)
+        dialog._add()
+        remaining = [bench._table.model().index(r, outcome_column).data()
+                     for r in range(bench._table.model().rowCount())]
+        check("excluding an outcome applies while the dialog is open",
+              target not in remaining
+              and len(remaining) == len(shown_outcomes)
+              - shown_outcomes.count(target),
+              f"{target!r} still shown: {remaining!r}")
+        dialog._list.item(0, 0).setCheckState(QtCore.Qt.CheckState.Unchecked)
+        check("unticking the rule brings the rows back",
+              bench._table.model().rowCount() == len(shown_outcomes),
+              f"{bench._table.model().rowCount()} of {len(shown_outcomes)}")
+        check("the list names the column as the table does",
+              dialog._list.item(0, 1).text() == "Outcome",
+              dialog._list.item(0, 1).text())
+        dialog.close()
+        bench._reset_filters()
+
+    header = bench._table.horizontalHeader()
+    check("a lens puts its own sort on the header",
+          header.sortIndicatorSection() == column_index("similarity"),
+          f"indicator on section {header.sortIndicatorSection()}")
+    click_header("outcome")
+    check("the outcome column sorts",
+          [bench._table.model().index(r, outcome_column).data()
+           for r in range(bench._table.model().rowCount())]
+          == sorted(shown_outcomes),
+          "rows not in outcome order")
+    bench.set_lens("all")
 
     bench._focus_search()
     # focusWidget() of the containing window, not hasFocus(): keyboard focus

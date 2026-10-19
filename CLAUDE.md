@@ -551,7 +551,17 @@ colours a **row**, not a cell, and the Trust column is a per-cell tint; its
 columns are also fixed at construction, which the lenses change.
 
 Rules match `cell_values`, so what you filter on is what you can see, and a
-hidden column still filters. A row survives when it matches at least one
+hidden column still filters. **Outcome is the exception that proves it**: it is
+the port preview's verdict, not a property of the row, so `cell_values` takes
+it as an argument and the workbench builds one preview over every match per
+(result, threshold) *before* the rules run (4 ms on 10,163 matches). It was
+hard-coded `""`, so "Outcome is already named → Exclude" kept every row. The
+dialog applies each edit as it is made; applying on Close left a rule in the
+list over a table that had not moved.
+
+The tables sort through `ui_logic`, not Qt, so Qt never draws the sort arrow;
+`_show_sort` does, and a lens change resets it to the lens's own order. Without
+it the header read as unsortable even though clicks worked. A row survives when it matches at least one
 enabled include (or there are none) and **no** enabled exclude -- excludes
 always win, which makes "everything except the CRT" one rule.
 

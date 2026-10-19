@@ -545,6 +545,25 @@ class TestPortPreview:
         assert "1 already named, skipped" in text
         assert "1 replace" in text and "name you wrote" in text
 
+    def test_restricting_keeps_each_bucket(self):
+        from ida_plugin.porting import preview_symbol_ports
+        full = preview_symbol_ports(self._matches(), min_similarity=0.5)
+        part = full.restricted_to([2, 3, 5])
+        assert part.will_write == ()
+        assert [p.match_id for p in part.replaces_yours] == [2]
+        assert part.already_named == (3,)
+        assert part.below_threshold == ()
+        assert part.nothing_to_write == (5,)
+        assert part.threshold == full.threshold
+        # Same answer as building it from the subset: outcomes are per match.
+        subset = [m for m in self._matches() if m.id in (2, 3, 5)]
+        assert part == preview_symbol_ports(subset, min_similarity=0.5)
+
+    def test_outcomes_cover_every_match(self):
+        from ida_plugin.porting import preview_symbol_ports
+        preview = preview_symbol_ports(self._matches(), min_similarity=0.5)
+        assert preview.outcomes() == {i: preview.outcome(i) for i in range(1, 6)}
+
 
 class TestLedger:
     def test_build_records_every_outcome(self):
