@@ -541,6 +541,26 @@ interpreter, the gencode stamp read from the generated module, and the pip
 line to type. `ida_preflight.py` reports the same three facts, which is the
 only place they can be observed.
 
+**Compare again** (`bindiff/rediff.py`, the strip's "Compare again" button) is
+upstream's "Diff Database Incrementally". It writes a seed `.BinDiff` of the
+matches to keep, and the worker runs `pipeline ... --keep <seed>`, which
+re-exports this database and calls `incremental_diff`. Kept pairs are not just
+preserved: `Diff()` propagates from *every* fixed point (`differ.cc`, the
+children/parents loops), seeded ones included, and `UpdateFixedPointConfidence`
+recomputes their similarity and confidence from the new exports.
+
+"Confirmed" means manual at confidence 1.0 (verified or paired by hand) **or**
+`commentsported` -- upstream keeps only the first. A ported name exists on both
+sides afterwards, so a plain re-diff pairs it by `name hash matching`, the first
+step, and vouches for it whether it was right or not. The seed is built from the
+open connection, not by copying the file, so unsaved verifies are in it.
+
+The engine's output loses both marks -- measured on insider: 0 manual and 0
+ported in the raw output -- so `carry_marks` restores them by address pair.
+Same fixture, 108 matches plain: keeping 3 confirmed gives 107 (104 new), keeping
+all gives 113. `incremental_diff` takes no callback, so a cancel during that
+stage goes unanswered and the worker is terminated after the 5s ack timeout.
+
 **Filter rules** (`ida_plugin/filters.py`) reproduce IDA's per-column filtering
 over our own table. The chooser carries that natively and there is no API to
 borrow it -- the quick filter, "Modify filters..." and the column picker

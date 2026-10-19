@@ -200,6 +200,20 @@ def default_output_name(primary, secondary) -> str:
     return f"{stem(primary)}_vs_{stem(secondary)}.BinDiff"
 
 
+def again_output_name(result_path) -> str:
+    """Where a comparison run again over `result_path` is saved by default.
+
+    Beside it and never on top of it: the open result is the seed's source
+    and is still open while the worker writes, and a second run should not
+    stack suffixes onto the name of the first.
+    """
+    path = Path(result_path)
+    stem = path.stem
+    if stem.endswith(".again"):
+        stem = stem[:-len(".again")]
+    return str(path.with_name(f"{stem}.again.BinDiff"))
+
+
 # The files this tool writes. Nothing here can be a side of a diff, and
 # handing one over does not fail -- which is the problem. IDA loads anything
 # as raw bytes, so a .BinDiff is disassembled as a flat blob of SQLite,
@@ -229,9 +243,14 @@ def reject_reason(path) -> Optional[str]:
     return f"{Path(path).name} is {what} this tool produced, not an input."
 
 
-def worker_arguments(primary: str, secondary: str, output: str) -> list:
-    """The command handed to the headless worker."""
-    return ["pipeline", str(primary), str(secondary), str(output)]
+def worker_arguments(primary: str, secondary: str, output: str,
+                     seed: Optional[str] = None) -> list:
+    """The command handed to the headless worker. `seed` keeps that
+    file's matches fixed (bindiff.rediff)."""
+    arguments = ["pipeline", str(primary), str(secondary), str(output)]
+    if seed is not None:
+        arguments += ["--keep", str(seed)]
+    return arguments
 
 
 # Long enough that a large pair is not cut off mid-diff, short enough that a

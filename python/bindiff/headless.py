@@ -673,12 +673,42 @@ def diff(primary: str, secondary: str, output: str,
         details={"cancelled": True} if cancelled else {})
 
 
+def incremental(primary: str, secondary: str, seed: str, output: str,
+                progress: Optional[Callable[[dict], None]] = None
+                ) -> StageResult:
+    """Diffs two .BinExport files keeping the matches in `seed` fixed.
+
+    See bindiff.rediff for what a seed holds and why. The engine's incremental
+    entry point takes no callback, so this reports once and cannot be stopped
+    part-way: a cancel during it goes unanswered and the launcher terminates
+    the worker after its acknowledgement timeout, which loses nothing that
+    was already on disk.
+    """
+    import bindiff
+    from bindiff.rediff import carry_marks
+
+    if progress is not None:
+        progress(_record("diff", "matching what is still unmatched"))
+    code = bindiff.incremental_diff(str(primary), str(secondary), str(seed),
+                                    str(output))
+    if code < 0:
+        return StageResult(ok=False, stage="diff",
+                           message=f"incremental diff failed with {code}",
+                           details={"code": code})
+    marks = carry_marks(str(seed), str(output))
+    return StageResult(
+        ok=True, stage="diff", output=str(output),
+        message=f"kept the confirmed matches; {code:,} new",
+        matches=len(bindiff.load_matches(str(output))),
+        details={"new": code, **marks})
+
+
 def pipeline(primary_input: str, secondary_input: str, output: str,
              work_dir: Optional[str] = None,
              exporter: Optional[Callable[[str], None]] = None,
              progress: Optional[Callable[[dict], None]] = None,
-             should_continue: Optional[Callable[[], bool]] = None
-             ) -> StageResult:
+             should_continue: Optional[Callable[[], bool]] = None,
+             seed: Optional[str] = None) -> StageResult:
     """Exports both inputs and diffs them.
 
     Each export opens and closes its own database in turn, in this one process.
@@ -691,6 +721,8 @@ def pipeline(primary_input: str, secondary_input: str, output: str,
     fraction for it would be a lie told to a progress bar. For the same reason
     a cancellation is only noticed between exports -- there is nothing partial
     to keep from a half-finished one, so nothing is lost by that.
+
+    With `seed`, the diff keeps that file's matches fixed (`incremental`).
     """
     work = Path(work_dir) if work_dir else Path(output).parent
     work.mkdir(parents=True, exist_ok=True)
@@ -732,9 +764,13 @@ def pipeline(primary_input: str, secondary_input: str, output: str,
     def diff_progress(record: dict) -> None:
         progress(_rescale(record, _EXPORT_SHARE, 1.0 - _EXPORT_SHARE))
 
-    result = diff(exports[0], exports[1], output,
-                  progress=diff_progress if progress else None,
-                  should_continue=should_continue)
+    if seed is not None:
+        result = incremental(exports[0], exports[1], seed, output,
+                             progress=diff_progress if progress else None)
+    else:
+        result = diff(exports[0], exports[1], output,
+                      progress=diff_progress if progress else None,
+                      should_continue=should_continue)
     result.details["exports"] = exports
     return result
 
@@ -1100,7 +1136,8 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     if not argv:
         print(StageResult(ok=False, stage="cli",
-                          message="usage: export|diff|types|import|pipeline ...").to_json())
+                          message="usage: export|diff|incremental|types|import|"
+                                  "pipeline ...").to_json())
         return 2
 
     command, rest = argv[0], argv[1:]
@@ -1115,10 +1152,15 @@ def main(argv: Optional[List[str]] = None) -> int:
                                 limit=int(rest[2]) if len(rest) > 2 else None)
         elif command == "types" and len(rest) == 2:
             result = dump_types(rest[0], rest[1])
-        elif command == "pipeline" and len(rest) == 3:
+        elif command == "pipeline" and len(rest) in (3, 5) and (
+                len(rest) == 3 or rest[3] == "--keep"):
             result = pipeline(rest[0], rest[1], rest[2],
                               progress=emit_progress,
-                              should_continue=should_continue)
+                              should_continue=should_continue,
+                              seed=rest[4] if len(rest) == 5 else None)
+        elif command == "incremental" and len(rest) == 4:
+            result = incremental(rest[0], rest[1], rest[2], rest[3],
+                                 progress=emit_progress)
         else:
             result = StageResult(ok=False, stage="cli",
                                  message=f"bad arguments for {command!r}")

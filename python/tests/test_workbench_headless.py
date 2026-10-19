@@ -49,7 +49,7 @@ def test_every_handler_it_calls_is_one_the_plugin_supplies():
     import re
     import ida_plugin.workbench as workbench
     source = Path(workbench.__file__).read_text(encoding="utf-8")
-    expected = {"compare", "cancel", "browse", "configure", "save", "close",
+    expected = {"compare", "compare_again", "cancel", "browse", "configure", "save", "close",
                 "unmatch", "verify", "port", "restore_name", "pair", "graphs",
                 "inspect", "copy_here", "copy_there", "locate_export", "jump",
                 "autosave"}

@@ -278,6 +278,18 @@ if IDA_AVAILABLE:
                 "Exports this database and compares it with the file above.\n"
                 "A .BinExport is used as it is, so only this side is exported.")
             self._compare.clicked.connect(self._start)
+            self._again = QtWidgets.QPushButton("Compare again")
+            self._again.setToolTip(
+                "Compares this database with the same other side again,\n"
+                "keeping the matches you verified, paired or ported through\n"
+                "and matching the rest afresh.")
+            self._again.clicked.connect(
+                lambda: self._handlers["compare_again"]())
+            idle = QtWidgets.QWidget()
+            buttons = QtWidgets.QHBoxLayout(idle)
+            buttons.setContentsMargins(0, 0, 0, 0)
+            buttons.addWidget(self._compare)
+            buttons.addWidget(self._again)
             running = QtWidgets.QWidget()
             row = QtWidgets.QHBoxLayout(running)
             row.setContentsMargins(0, 0, 0, 0)
@@ -289,7 +301,7 @@ if IDA_AVAILABLE:
             self._cancel.clicked.connect(lambda: self._handlers["cancel"]())
             row.addWidget(self._bar, 1)
             row.addWidget(self._cancel)
-            self._stack.addWidget(self._compare)
+            self._stack.addWidget(idle)
             self._stack.addWidget(running)
             self._timer = QtCore.QTimer(self)
             self._timer.timeout.connect(self._tick)
@@ -376,6 +388,7 @@ if IDA_AVAILABLE:
         def refresh_enabled(self) -> None:
             can = self._session.can
             self._compare.setEnabled(can(actions.COMPARE))
+            self._again.setEnabled(can(actions.COMPARE_AGAIN))
             self._cancel.setEnabled(can(actions.CANCEL))
             self._save.setEnabled(can(actions.SAVE))
             self._close.setEnabled(can(actions.CLOSE))

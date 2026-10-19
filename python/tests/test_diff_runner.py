@@ -195,6 +195,16 @@ class TestCommandConstruction:
         assert worker_arguments("a.exe", "b.exe", "o.BinDiff") == [
             "pipeline", "a.exe", "b.exe", "o.BinDiff"]
 
+    def test_a_seed_is_passed_as_keep(self):
+        assert worker_arguments("a.exe", "b.exe", "o.BinDiff", "k.BinDiff") == [
+            "pipeline", "a.exe", "b.exe", "o.BinDiff", "--keep", "k.BinDiff"]
+
+    def test_comparing_again_saves_beside_and_does_not_stack(self):
+        from ida_plugin.diff_runner import again_output_name
+        first = again_output_name("/r/a_vs_b.BinDiff")
+        assert first == "/r/a_vs_b.again.BinDiff"
+        assert again_output_name(first) == first
+
     def test_paths_are_stringified(self):
         """A Path must not reach the command line as a Path.
 

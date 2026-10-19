@@ -9,7 +9,8 @@ import ida_plugin.bindiff_plugin as plugin
 
 def test_action_ids_are_unchanged():
     expected = {
-        "bindiff:main", "bindiff:diff_database", "bindiff:load_results",
+        "bindiff:main", "bindiff:diff_database", "bindiff:compare_again",
+        "bindiff:load_results",
         "bindiff:save_results", "bindiff:show_matched", "bindiff:show_statistics",
         "bindiff:show_primary_unmatched", "bindiff:show_secondary_unmatched",
         "bindiff:match_delete", "bindiff:confirm_matches",
@@ -63,11 +64,11 @@ def test_a_restore_reports_what_ida_answered():
 
 def test_every_way_of_losing_a_result_asks_the_same_question():
     """Replacing an edited result is closing it: open_result reopens the
-    connection, and what was not committed is gone. Close, Open result... and
-    a finished comparison all go through the one question."""
+    connection, and what was not committed is gone. Close, Open result..., a
+    comparison and a comparison run again all go through the one question."""
     source = Path(plugin.__file__).read_text(encoding="utf-8")
     assert '_confirm_discard("Close")' in source
-    assert source.count('_confirm_discard("Replace the open result")') == 2
+    assert source.count('_confirm_discard("Replace the open result")') == 3
 
 
 def test_a_result_that_will_not_open_is_a_message_either_way():

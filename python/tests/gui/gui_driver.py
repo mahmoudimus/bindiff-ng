@@ -207,6 +207,10 @@ def run_checks() -> None:
           bench is not None and bench.parent is not None
           and bench._table.model().rowCount() == len(rows),
           "table row count differs from the session's rows")
+    strip = bench.run_strip
+    check("compare again is offered over an open result",
+          strip._again.isEnabled() and not strip._again.isHidden(),
+          f"enabled={strip._again.isEnabled()} hidden={strip._again.isHidden()}")
     check("seven columns visible",
           sum(1 for i in range(bench._table.model().columnCount())
               if not bench._table.isColumnHidden(i)) == 7)
@@ -388,6 +392,47 @@ def run_checks() -> None:
           plugin.session.selected_ids == (rows[0].match_id,),
           f"the session holds {plugin.session.selected_ids!r}")
     check("verify is available with a selection", plugin.session.can("verify"))
+
+    # Compare again: the handler's own decisions, in the real plugin over
+    # the real session. Everything that would open a modal or start a worker
+    # is replaced -- a modal under Xvfb waits for a click that never comes --
+    # and what would have been launched is captured instead.
+    import sqlite3 as _sqlite3
+    launched, warned = [], []
+    saved = (ida_kernwin.warning, ida_kernwin.ask_file,
+             plugin._ensure_binexport_plugin, plugin._primary_to_export,
+             plugin._confirm_discard, plugin._start_compare)
+    ida_kernwin.warning = lambda message: warned.append(message)
+    ida_kernwin.ask_file = lambda *_args: "/tmp/gui-again.BinDiff"
+    plugin._ensure_binexport_plugin = lambda: True
+    plugin._primary_to_export = lambda: "/tmp/primary.i64"
+    plugin._confirm_discard = lambda _verb: True
+
+    def capture(title, primary, secondary, output, seed=None):
+        rows_in_seed = _sqlite3.connect(seed).execute(
+            "SELECT address1 FROM function").fetchall()
+        launched.append((primary, secondary, output, len(rows_in_seed)))
+    plugin._start_compare = capture
+    try:
+        plugin._compare_again("confirmed")
+        check("compare again refuses when nothing is confirmed",
+              not launched and warned and "nothing to keep" in warned[-1],
+              f"launched={launched} warned={warned}")
+        plugin.session.verify([rows[0].match_id])
+        plugin._compare_again("confirmed")
+        check("compare again seeds from the verified match",
+              len(launched) == 1 and launched[0][3] == 1
+              and launched[0][2] == "/tmp/gui-again.BinDiff",
+              f"launched={launched} warned={warned}")
+        plugin._compare_again("all")
+        check("keeping every match seeds every match",
+              len(launched) == 2 and launched[1][3] == len(rows),
+              f"launched={launched}")
+    finally:
+        (ida_kernwin.warning, ida_kernwin.ask_file,
+         plugin._ensure_binexport_plugin, plugin._primary_to_export,
+         plugin._confirm_discard, plugin._start_compare) = saved
+        plugin.session.revert()
 
     plugin._inspect()
     check("inspector dock exists",

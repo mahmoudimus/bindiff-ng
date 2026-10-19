@@ -78,6 +78,7 @@ PLUGIN_HELP = "Load a .BinDiff result file and browse the matches"
 # muscle memory, saved layouts and any existing scripting keep working.
 ACTION_MAIN = "bindiff:main"
 ACTION_DIFF_DATABASE = "bindiff:diff_database"
+ACTION_COMPARE_AGAIN = "bindiff:compare_again"
 ACTION_LOAD = "bindiff:load_results"
 ACTION_SAVE = "bindiff:save_results"
 ACTION_SHOW_MATCHES = "bindiff:show_matched"
@@ -214,6 +215,7 @@ if IDA_AVAILABLE:
             """
             return {
                 "compare": self._compare,
+                "compare_again": self._compare_again,
                 "cancel": self._cancel,
                 "browse": self._browse,
                 "configure": self._configure,
@@ -268,6 +270,8 @@ if IDA_AVAILABLE:
             specs = (
                 (ACTION_MAIN, PLUGIN_NAME, self._open_workbench),
                 (ACTION_DIFF_DATABASE, "Compare with…", self._compare_from_menu),
+                (ACTION_COMPARE_AGAIN, "Compare again, keeping confirmed matches…",
+                 self._compare_again),
                 (ACTION_LOAD, "Open result…", self._load_results),
                 (ACTION_SAVE, "Save result", self._save),
                 (ACTION_SHOW_MATCHES, "Matched functions",
@@ -1229,7 +1233,11 @@ if IDA_AVAILABLE:
             if not self._confirm_discard("Replace the open result"):
                 return
 
-            title = panel_title(primary)
+            self._start_compare(panel_title(primary), primary, secondary,
+                                output)
+
+        def _start_compare(self, title: str, primary: str, secondary: str,
+                           output: str, seed: Optional[str] = None) -> None:
             workbench = self._the_workbench()
             workbench.show_scope("matches")
             self.session.begin_compare(title)
@@ -1237,7 +1245,103 @@ if IDA_AVAILABLE:
                 workbench.run_strip.start(title)
             self._report("comparing in a background process; the UI stays "
                          "responsive. This can take a while.")
-            self._run_diff_async(primary, secondary, output)
+            self._run_diff_async(primary, secondary, output, seed=seed)
+
+        def _compare_again(self, keep: Optional[str] = None) -> None:
+            """Compares again against the same other side, keeping the
+            matches that were verified, paired by hand or ported through.
+
+            BinDiff's "Diff Database Incrementally". The kept pairs are fixed
+            before matching starts and the call-graph propagation runs from
+            them, so what was confirmed steers what is found next; everything
+            else is matched afresh against this database as it is now. See
+            bindiff.rediff for why ported matches count as confirmed.
+            """
+            import shutil
+            import tempfile
+
+            from bindiff.rediff import (KEEP_ALL, KEEP_CONFIRMED, is_confirmed,
+                                        kept_matches, write_seed)
+            from ida_plugin.diff_runner import again_output_name, panel_title
+
+            if not self._allowed(actions.COMPARE_AGAIN):
+                return
+            if not self._ensure_binexport_plugin():
+                return
+
+            database = self.controller.database
+            matches = database.matches()
+            confirmed = sum(1 for match in matches if is_confirmed(match))
+            if keep is None:
+                choice = ida_kernwin.ask_buttons(
+                    "Confirmed only", "Every match", "Cancel", 1,
+                    "Compare again, keeping which matches?\n\n"
+                    f"Confirmed only: the {confirmed:,} verified, paired by "
+                    "hand or ported through. Everything else is matched "
+                    "afresh.\n\n"
+                    f"Every match: all {len(matches):,}, including the ones "
+                    "nobody has looked at. Only what is unmatched is "
+                    "searched.")
+                if choice == 1:
+                    keep = KEEP_CONFIRMED
+                elif choice == 0:
+                    keep = KEEP_ALL
+                else:
+                    return
+            kept = kept_matches(matches, keep)
+            if not kept:
+                ida_kernwin.warning(
+                    "Nothing in this result is verified, paired by hand or "
+                    "ported yet, so there is nothing to keep.\n\n"
+                    "Verify or port some matches first, or keep every match.")
+                return
+
+            secondary = self.controller.resolve_binexports()[1]
+            if not secondary or not Path(secondary).exists():
+                recorded = self.controller.recorded_input_name(1) or "the other side"
+                secondary = ida_kernwin.ask_file(
+                    False, "*",
+                    f"Select {recorded}: its .BinExport, binary or database")
+                if not secondary:
+                    return
+
+            primary = self._primary_to_export()
+            if not primary:
+                ida_kernwin.warning(
+                    "This database has never been saved and there is no input "
+                    "file to fall back on, so there is nothing to export.")
+                return
+
+            current = self.session.meta.path
+            output = ida_kernwin.ask_file(True, again_output_name(current),
+                                          "Save result as")
+            if not output:
+                return
+            if Path(output).resolve() == Path(current).resolve():
+                # The open result is the seed's source and stays open while
+                # the worker writes; the engine replacing it underneath this
+                # connection is not something sqlite survives gracefully.
+                ida_kernwin.warning(
+                    "Save the new result under another name: the open one "
+                    "stays open while the comparison runs.")
+                return
+            # Asked after the seed's source is settled: the seed is built
+            # from this connection, unsaved edits included, but the result
+            # that finishes replaces this one, and those edits go with it.
+            if not self._confirm_discard("Replace the open result"):
+                return
+
+            holder = tempfile.mkdtemp(prefix="bindiff-seed-")
+            seed = str(Path(holder) / "keep.BinDiff")
+            try:
+                write_seed(kept, seed)
+            except Exception:
+                shutil.rmtree(holder, ignore_errors=True)
+                raise
+            self._report(f"comparing again, keeping {len(kept):,} of "
+                         f"{len(matches):,} matches")
+            self._start_compare(panel_title(primary), primary, secondary,
+                                output, seed=seed)
 
         def _cancel(self) -> None:
             if not self._allowed(actions.CANCEL):
@@ -1322,7 +1426,7 @@ if IDA_AVAILABLE:
                 shutil.rmtree(holder, ignore_errors=True)
 
         def _run_diff_async(self, primary: str, secondary: str,
-                            output: str) -> None:
+                            output: str, seed: Optional[str] = None) -> None:
             """Wires the real collaborators into DiffRun and starts it.
 
             The sequence itself lives in ida_plugin.diff_runner, which has no
@@ -1412,12 +1516,17 @@ if IDA_AVAILABLE:
                 # another IDA is locked, idalib's open_database returns
                 # non-zero for it, and that surfaced as a bare "could not open
                 # <path>" with nothing to do about it.
-                with self._snapshot(args[1]) as primary_source, \
-                        self._snapshot(args[2]) as secondary_source:
-                    result = run_headless(
-                        [args[0], primary_source, secondary_source,
-                         *args[3:]],
-                        timeout=DEFAULT_TIMEOUT_SECONDS, **kwargs)
+                try:
+                    with self._snapshot(args[1]) as primary_source, \
+                            self._snapshot(args[2]) as secondary_source:
+                        result = run_headless(
+                            [args[0], primary_source, secondary_source,
+                             *args[3:]],
+                            timeout=DEFAULT_TIMEOUT_SECONDS, **kwargs)
+                finally:
+                    if seed is not None:
+                        import shutil
+                        shutil.rmtree(Path(seed).parent, ignore_errors=True)
                 # Stashed rather than threaded through DiffRun: `load` is
                 # handed the path and the exports only, and whether the run
                 # was cancelled is the one other thing the session needs.
@@ -1439,8 +1548,8 @@ if IDA_AVAILABLE:
 
             threading.Thread(
                 target=run.execute,
-                args=(worker_arguments(primary, secondary, output), output,
-                      cancel),
+                args=(worker_arguments(primary, secondary, output, seed),
+                      output, cancel),
                 daemon=True).start()
 
         # -- results --------------------------------------------------------

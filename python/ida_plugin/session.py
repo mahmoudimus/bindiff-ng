@@ -38,6 +38,7 @@ class State(str, Enum):
 OPEN_STATES = (State.OPEN_CLEAN, State.OPEN_EDITED, State.OPEN_PARTIAL)
 
 COMPARE = "compare"
+COMPARE_AGAIN = "compare_again"
 CANCEL = "cancel"
 SAVE = "save"
 CLOSE = "close"
@@ -391,6 +392,9 @@ class DiffSession:
         some = len(self.selected_ids) >= 1
         if action in (COMPARE, CONFIGURE):
             return self.state is not State.COMPARING
+        if action == COMPARE_AGAIN:
+            # Over an open result, which is where the kept matches come from.
+            return self.is_open
         if action == CANCEL:
             return self.state is State.COMPARING
         if action == SAVE:
